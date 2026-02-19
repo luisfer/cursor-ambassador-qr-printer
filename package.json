@@ -1,0 +1,43 @@
+{
+  "name": "cursor-ambassador-qr-printer",
+  "version": "1.0.0",
+  "description": "Generate printable QR code cards for Cursor community events. Web UI + CLI.",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "cli": "node cli/generate.js"
+  },
+  "keywords": [
+    "qr-code",
+    "pdf",
+    "cursor",
+    "ambassador",
+    "community",
+    "referral"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "iconv-lite": "^0.6.3",
+    "next": "^14.2.0",
+    "pdfkit": "^0.14.0",
+    "qrcode": "^1.5.3",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "sharp": "^0.33.2",
+    "tsx": "^4.19.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.10",
+    "@types/pdfkit": "^0.17.3",
+    "@types/qrcode": "^1.5.5",
+    "@types/react": "^18.2.64",
+    "@types/react-dom": "^18.2.21",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.5.3",
+    "tailwindcss": "^3.4.1",
+    "typescript": "^5.8.2"
+  }
+}
