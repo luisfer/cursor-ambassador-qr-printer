@@ -51,6 +51,19 @@ async function loadLogoBuffer(logoPath: string): Promise<{
   }
 }
 
+function registerCursorFonts(doc: PDFKit.PDFDocument): boolean {
+  const fontsDir = path.join(process.cwd(), "public", "fonts");
+  const regularPath = path.join(fontsDir, "CursorGothic-Regular.otf");
+  const boldPath = path.join(fontsDir, "CursorGothic-Bold.otf");
+
+  if (fs.existsSync(regularPath) && fs.existsSync(boldPath)) {
+    doc.registerFont("CursorGothic", regularPath);
+    doc.registerFont("CursorGothic-Bold", boldPath);
+    return true;
+  }
+  return false;
+}
+
 export async function generateQRCodePDF({
   linksText,
   config: rawConfig,
@@ -94,22 +107,27 @@ export async function generateQRCodePDF({
 
   const doc = new PDFDocument({
     size: config.paperSize,
-    margins: { top: 20, bottom: 20, left: 20, right: 20 },
+    margins: { top: 0, bottom: 0, left: 0, right: 0 },
   });
+
+  const hasCursorFont = registerCursorFonts(doc);
+  const fontRegular = hasCursorFont ? "CursorGothic" : "Helvetica";
+  const fontBold = hasCursorFont ? "CursorGothic-Bold" : "Helvetica-Bold";
 
   const chunks: Buffer[] = [];
   doc.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
 
-  const pageWidth = doc.page.width - 40;
-  const pageHeight = doc.page.height - 40;
-  const cardWidth = (pageWidth - 20) / config.gridCols;
-  const cardHeight = (pageHeight - 20) / config.gridRows;
-  const cardSpacing = 10;
-  const qrSize = Math.min(
-    cardWidth * config.qrWidthRatio,
-    cardHeight * config.qrHeightRatio,
-  );
+  const pageWidth = doc.page.width;
+  const pageHeight = doc.page.height;
+  const cardWidth = pageWidth / config.gridCols;
+  const cardHeight = pageHeight / config.gridRows;
   const cardsPerPage = config.gridCols * config.gridRows;
+
+  // Cursor-inspired colors (white bg friendly)
+  const textPrimary = "#1a1914";
+  const textSecondary = "#6b6961";
+  const textMuted = "#8a877d";
+  const cutLineColor = "#d4d2cc";
 
   let currentPage = 0;
   let qrIndex = 0;
@@ -119,18 +137,19 @@ export async function generateQRCodePDF({
       doc.addPage();
     }
 
-    doc.strokeColor("#CCCCCC");
+    // Dashed cut lines (subtle, Cursor-warm gray)
+    doc.strokeColor(cutLineColor);
     doc.lineWidth(0.5);
-    doc.dash(3, { space: 3 });
+    doc.dash(4, { space: 4 });
 
     for (let col = 1; col < config.gridCols; col++) {
-      const x = 20 + col * cardWidth;
-      doc.moveTo(x, 20).lineTo(x, pageHeight + 20).stroke();
+      const x = col * cardWidth;
+      doc.moveTo(x, 0).lineTo(x, pageHeight).stroke();
     }
 
     for (let row = 1; row < config.gridRows; row++) {
-      const y = 20 + row * cardHeight;
-      doc.moveTo(20, y).lineTo(pageWidth + 20, y).stroke();
+      const y = row * cardHeight;
+      doc.moveTo(0, y).lineTo(pageWidth, y).stroke();
     }
 
     doc.undash();
@@ -138,88 +157,148 @@ export async function generateQRCodePDF({
     for (let row = 0; row < config.gridRows && qrIndex < qrCodes.length; row++) {
       for (let col = 0; col < config.gridCols && qrIndex < qrCodes.length; col++) {
         const qrCode = qrCodes[qrIndex];
-        const cardX = 20 + col * cardWidth + cardSpacing / 2;
-        const cardY = 20 + row * cardHeight + cardSpacing / 2;
-        const cardContentWidth = cardWidth - cardSpacing;
-        const cardContentHeight = cardHeight - cardSpacing;
+        const cardX = col * cardWidth;
+        const cardY = row * cardHeight;
 
-        doc.strokeColor("#F0F0F0");
-        doc.lineWidth(0.5);
-        doc.rect(cardX, cardY, cardContentWidth, cardContentHeight).stroke();
+        const padX = 10;
+        const contentWidth = cardWidth - padX * 2;
 
-        let currentY = cardY + config.cardTopPadding;
+        // --- Measure all element heights first ---
+        const eventNameH = config.eventName ? 12 : 0;
+        const eventDateH = config.eventDate ? 10 : 0;
 
-        if (config.eventName) {
-          doc.fontSize(8).fillColor("#333333").text(config.eventName, cardX, currentY, {
-            width: cardContentWidth,
-            align: "center",
-          });
-          currentY += 10;
-        }
-
-        if (config.eventDate) {
-          doc.fontSize(7).fillColor("#666666").text(config.eventDate, cardX, currentY, {
-            width: cardContentWidth,
-            align: "center",
-          });
-          currentY += 9;
-        }
-
+        let logoW = 0;
+        let logoH = 0;
         if (logoResult.buffer && logoResult.width > 0 && logoResult.height > 0) {
-          const logoWidth = Math.min(100, cardContentWidth * 0.82);
-          const logoHeight = logoWidth / (logoResult.width / logoResult.height);
-          const logoX = cardX + (cardContentWidth - logoWidth) / 2;
-          doc.image(logoResult.buffer, logoX, currentY, {
-            width: logoWidth,
-            height: logoHeight,
-          });
-          currentY += logoHeight + config.logoSpacing;
-        } else {
-          currentY += 5;
+          logoW = Math.min(80, contentWidth * 0.5);
+          logoH = logoW / (logoResult.width / logoResult.height);
         }
 
-        const qrX = cardX + (cardContentWidth - qrSize) / 2;
-        const qrY = currentY;
-        const base64Data = qrCode.dataURL.replace(/^data:image\/png;base64,/, "");
-        const imageBuffer = Buffer.from(base64Data, "base64");
-        doc.image(imageBuffer, qrX, qrY, { width: qrSize, height: qrSize });
-
-        const numberY = qrY + qrSize + config.numberSpacing;
-        doc.fontSize(config.labelFontSize).fillColor("#000000").text(
-          formatCardLabel(qrCode.codeNumber, config),
-          cardX,
-          numberY,
-          { width: cardContentWidth, align: "center" },
+        const qrSize = Math.min(
+          contentWidth * config.qrWidthRatio,
+          cardHeight * config.qrHeightRatio,
         );
 
-        if (config.urlDisplayStyle === "full") {
-          const split = splitURL(qrCode.url);
-          const urlLine1Y = numberY + 16;
-          doc.fontSize(7.5).fillColor("#444444").text(split.line1, cardX, urlLine1Y, {
-            width: cardContentWidth,
-            align: "center",
-          });
-          if (split.line2) {
-            const urlLine2Y = urlLine1Y + 10;
-            doc
-              .fontSize(8.5)
-              .fillColor("#000000")
-              .font("Helvetica-Bold")
-              .text(split.line2, cardX, urlLine2Y, {
-                width: cardContentWidth,
-                align: "center",
-              });
-            doc.font("Helvetica");
-          }
-        } else if (config.urlDisplayStyle === "truncated") {
-          const urlY = numberY + 18;
-          doc.fontSize(7).fillColor("#666666").text(truncateURL(qrCode.url), cardX, urlY, {
-            width: cardContentWidth,
-            align: "center",
-            lineGap: 2,
-          });
+        const labelH = config.labelFontSize + 2;
+
+        const urlLine1H = config.urlDisplayStyle !== "hidden" ? 9 : 0;
+        const urlLine2H =
+          config.urlDisplayStyle === "full" &&
+          qrCode.url.includes("cursor.com/referral")
+            ? 10
+            : 0;
+
+        // Total content height and gap distribution
+        const totalContentH =
+          eventNameH + eventDateH + logoH + qrSize + labelH + urlLine1H + urlLine2H;
+
+        // Count gaps between visible elements
+        const elements = [
+          eventNameH > 0,
+          eventDateH > 0,
+          logoH > 0,
+          true, // QR always visible
+          true, // label always visible
+          urlLine1H > 0,
+        ].filter(Boolean).length;
+        const gapCount = elements - 1 + (urlLine2H > 0 ? 1 : 0);
+
+        const availableSpace = cardHeight - totalContentH;
+        const gap = Math.min(availableSpace / (gapCount + 2), 24);
+        const topPad = (cardHeight - totalContentH - gap * gapCount) / 2;
+
+        let currentY = cardY + topPad;
+
+        // Event name
+        if (config.eventName) {
+          doc
+            .font(fontBold)
+            .fontSize(9)
+            .fillColor(textPrimary)
+            .text(config.eventName, cardX + padX, currentY, {
+              width: contentWidth,
+              align: "center",
+            });
+          currentY += eventNameH + gap;
         }
 
+        // Event date
+        if (config.eventDate) {
+          doc
+            .font(fontRegular)
+            .fontSize(7)
+            .fillColor(textSecondary)
+            .text(config.eventDate, cardX + padX, currentY, {
+              width: contentWidth,
+              align: "center",
+            });
+          currentY += eventDateH + gap;
+        }
+
+        // Logo
+        if (logoH > 0) {
+          const logoX = cardX + (cardWidth - logoW) / 2;
+          doc.image(logoResult.buffer!, logoX, currentY, {
+            width: logoW,
+            height: logoH,
+          });
+          currentY += logoH + gap;
+        }
+
+        // QR code
+        const qrX = cardX + (cardWidth - qrSize) / 2;
+        const base64Data = qrCode.dataURL.replace(/^data:image\/png;base64,/, "");
+        const imageBuffer = Buffer.from(base64Data, "base64");
+        doc.image(imageBuffer, qrX, currentY, { width: qrSize, height: qrSize });
+        currentY += qrSize + gap;
+
+        // Card number label
+        doc
+          .font(fontBold)
+          .fontSize(config.labelFontSize)
+          .fillColor(textPrimary)
+          .text(
+            formatCardLabel(qrCode.codeNumber, config),
+            cardX + padX,
+            currentY,
+            { width: contentWidth, align: "center" },
+          );
+        currentY += labelH + gap;
+
+        // URL display
+        if (config.urlDisplayStyle === "full") {
+          const split = splitURL(qrCode.url);
+          doc
+            .font(fontRegular)
+            .fontSize(6.5)
+            .fillColor(textMuted)
+            .text(split.line1, cardX + padX, currentY, {
+              width: contentWidth,
+              align: "center",
+            });
+          if (split.line2) {
+            currentY += urlLine1H + (gap * 0.3);
+            doc
+              .font(fontBold)
+              .fontSize(7.5)
+              .fillColor(textPrimary)
+              .text(split.line2, cardX + padX, currentY, {
+                width: contentWidth,
+                align: "center",
+              });
+          }
+        } else if (config.urlDisplayStyle === "truncated") {
+          doc
+            .font(fontRegular)
+            .fontSize(6.5)
+            .fillColor(textMuted)
+            .text(truncateURL(qrCode.url), cardX + padX, currentY, {
+              width: contentWidth,
+              align: "center",
+            });
+        }
+
+        doc.font(fontRegular);
         qrIndex++;
       }
     }
